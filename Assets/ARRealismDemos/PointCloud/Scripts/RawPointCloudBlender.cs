@@ -54,14 +54,14 @@ public class RawPointCloudBlender : MonoBehaviour
     public float OffsetFromCamera = 1.0f;
 
     // Limit the number of points to bound the performance cost of rendering the point cloud.
-    private const int _maxVerticesInBuffer = 1000000;
+    private const int _maxVerticesInBuffer = 1048576; // 2^n, permet des optimisations d'arithmétique binaire (modulo)
     private const double _maxUpdateInvervalInSeconds = 0.5f;
     private const double _minUpdateInvervalInSeconds = 0.07f;
     private static readonly string _confidenceThresholdPropertyName = "_ConfidenceThreshold";
     private bool _initialized;
     private ARCameraManager _cameraManager;
     private XRCameraIntrinsics _cameraIntrinsics;
-    private Mesh _mesh;
+    // private Mesh _mesh;
 
     private Vector3[] _vertices = new Vector3[_maxVerticesInBuffer];
     private int _verticesCount = 0;
@@ -94,8 +94,11 @@ public class RawPointCloudBlender : MonoBehaviour
 
     private void Start()
     {
-        _mesh = new Mesh();
-        _mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        _meshFilter = GetComponent<MeshFilter>();
+        _meshFilter.mesh = new Mesh
+        {
+            indexFormat = IndexFormat.UInt32
+        };
         _pointCloudMaterial = GetComponent<Renderer>().material;
         _cameraManager = FindObjectOfType<ARCameraManager>();
         _cameraManager.frameReceived += OnCameraFrameReceived;
@@ -234,7 +237,7 @@ public class RawPointCloudBlender : MonoBehaviour
 
                 int colorX = x * _cameraWidth / DepthSource.DepthWidth;
                 int colorY = colorHeightOffset +
-                    (y * colorHeightDepthAspectRatio / DepthSource.DepthHeight);
+                             (y * colorHeightDepthAspectRatio / DepthSource.DepthHeight);
                 int linearIndexY = (colorY * _rowStrideY) + colorX;
                 int linearIndexUV = ((colorY / 2) * _rowStrideUV) + ((colorX / 2) * _pixelStrideUV);
 
@@ -252,28 +255,27 @@ public class RawPointCloudBlender : MonoBehaviour
                     ++_verticesCount;
                 }
 
-                // Replaces old vertices in the buffer after reaching the maximum capacity.
-                if (_verticesIndex >= _maxVerticesInBuffer)
-                {
-                    _verticesIndex = 0;
-                }
+                // Optimisation "branchless" :
+                // le code original usait d'un "if" pour réécrire sur les vielles valeurs des tampons circulaires.
+                // Combiné à la taille de tampon de 2^n, remplace une instruction "jne" par des instructions
+                // "sar", "and" et "add", ne nécessitant pas de prédiction de branche et s'exécutant en un cycle
+                ++_verticesIndex;
+                _verticesIndex %= _maxVerticesInBuffer;
 
                 _vertices[_verticesIndex] = vertex;
                 _colors[_verticesIndex] = color;
-                ++_verticesIndex;
             }
         }
 
         if (_verticesCount == 0)
-        {
             return;
-        }
 
         // Assigns graphical buffers.
 #if UNITY_2019_3_OR_NEWER
-        _mesh.SetVertices(_vertices, 0, _verticesCount);
-        _mesh.SetIndices(_indices, 0, _verticesCount, MeshTopology.Points, 0);
-        _mesh.SetColors(_colors, 0, _verticesCount);
+        //optimisation: retiré la copie du mesh
+        _meshFilter.mesh.SetVertices(_vertices, 0, _verticesCount);
+        _meshFilter.mesh.SetIndices(_indices, 0, _verticesCount, MeshTopology.Points, 0);
+        _meshFilter.mesh.SetColors(_colors, 0, _verticesCount);
 #else
         // Note that we recommend using Unity 2019.3 or above to compile this scene.
         List<Vector3> vertexList = new List<Vector3>();
@@ -283,17 +285,14 @@ public class RawPointCloudBlender : MonoBehaviour
         for (int i = 0; i < _verticesCount; ++i)
         {
             vertexList.Add(_vertices[i]);
-            indexList.Add(_indices[i]);
+            // indexList.Add(_indices[i]);
             colorList.Add(_colors[i]);
         }
 
-        _mesh.SetVertices(vertexList);
-        _mesh.SetIndices(indexList.ToArray(), MeshTopology.Points, 0);
-        _mesh.SetColors(colorList);
+        _meshFilter.mesh.SetVertices(vertexList);
+        _meshFilter.mesh.SetIndices(indexList.ToArray(), MeshTopology.Points, 0);
+        _meshFilter.mesh.SetColors(colorList);
 #endif // UNITY_2019_3_OR_NEWER
-
-        MeshFilter meshFilter = GetComponent<MeshFilter>();
-        meshFilter.mesh = _mesh;
         _lastUpdateTimeSeconds = Time.realtimeSinceStartup;
     }
 
