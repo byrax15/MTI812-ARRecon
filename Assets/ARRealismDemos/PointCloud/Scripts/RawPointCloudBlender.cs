@@ -19,7 +19,13 @@
 //-----------------------------------------------------------------------
 
 using System;
+using System.Collections;
+using System.Globalization;
+using System.Text;
+using SimpleFileBrowser;
 using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
@@ -36,7 +42,9 @@ public class RawPointCloudBlender : MonoBehaviour
     /// <summary>
     /// Slider that controls visibility of point clouds based on confidence threshold.
     /// </summary>
-    public UnityEngine.UI.Slider ConfidenceSlider;
+    public Slider ConfidenceSlider;
+
+    public ErrorPanel ErrorOut;
 
     /// <summary>
     /// The translation between the point cloud and the device camera along the camera's forward
@@ -134,17 +142,11 @@ public class RawPointCloudBlender : MonoBehaviour
     }
 
     void OnCameraFrameReceived(ARCameraFrameEventArgs eventArgs)
-    {   
-        if (_cameraManager.TryAcquireLatestCpuImage(out XRCpuImage cameraImage))
-        {
-            using(cameraImage)
-            {
-                if (cameraImage.format == XRCpuImage.Format.AndroidYuv420_888)
-                {
-                    OnImageAvailable(cameraImage);
-                }
-            }
-        }
+    {
+        if (!_cameraManager.TryAcquireLatestCpuImage(out XRCpuImage cameraImage)) return;
+        using var image = cameraImage;
+        if (cameraImage.format == XRCpuImage.Format.AndroidYuv420_888)
+            OnImageAvailable(cameraImage);
     }
 
     /// <summary>
@@ -177,6 +179,12 @@ public class RawPointCloudBlender : MonoBehaviour
     {
         // Exits when ARCore is not ready.
         if (!_initialized || _cameraBufferY == null)
+        {
+            return;
+        }
+
+        // court-circuite la MÀJ, mais permet le visionnement sous tous les sens
+        if (Paused)
         {
             return;
         }
@@ -308,6 +316,79 @@ public class RawPointCloudBlender : MonoBehaviour
         byte r = (byte)(rFloat * 255f);
         byte g = (byte)(gFloat * 255f);
         byte b = (byte)(bFloat * 255f);
-        return new[] {r, g, b};
+        return new[] { r, g, b };
     }
+
+
+    #region Extension_MTI812
+
+    public bool Paused;
+    private MeshFilter _meshFilter;
+
+    public void TogglePause() => Paused = !Paused;
+
+    public void ExportAsXyzRgb()
+    {
+        try
+        {
+            StartCoroutine(StartSaveRoutine());
+        }
+        catch (Exception e)
+        {
+            ErrorOut.ShowError(e);
+        }
+    }
+
+    private IEnumerator StartSaveRoutine()
+    {
+        var pausedBak = Paused;
+        try
+        {
+            Paused = true;
+            yield return QueryExportPath();
+            FileBrowserHelpers.WriteTextToFile(FileBrowser.Result[0], PointCloudToString());
+        }
+        finally
+        {
+            Paused = pausedBak;
+        }
+    }
+
+    private IEnumerator QueryExportPath()
+    {
+        yield return FileBrowser.WaitForSaveDialog(FileBrowser.PickMode.Files);
+        if (!FileBrowser.Success)
+            ErrorOut.ShowError("Save cancelled");
+    }
+
+    private string PointCloudToString()
+    {
+        var builder = new StringBuilder();
+        var confidence = ConfidenceSlider.value;
+
+        for (var n = 0; n < _verticesCount; ++n)
+        {
+            var i = (_verticesIndex + n) % _maxVerticesInBuffer;
+
+            if (_colors[i].a < confidence * 255f)
+                continue;
+
+            builder.Append(_vertices[i].x.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" ");
+            builder.Append(_vertices[i].y.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" ");
+            builder.Append(_vertices[i].z.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" ");
+            builder.Append(_colors[i].r.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" ");
+            builder.Append(_colors[i].g.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" ");
+            builder.Append(_colors[i].b.ToString(CultureInfo.InvariantCulture));
+            builder.Append("\n");
+        }
+
+        return builder.ToString();
+    }
+
+    #endregion Extension_MTI812
 }
