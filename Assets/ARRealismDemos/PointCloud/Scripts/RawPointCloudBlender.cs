@@ -32,7 +32,7 @@ using UnityEngine.XR.ARSubsystems;
 /// <summary>
 /// Computes a point cloud from the depth map on the CPU.
 /// </summary>
-public class RawPointCloudBlender : MonoBehaviour
+public partial class RawPointCloudBlender : MonoBehaviour
 {
     /// <summary>
     /// Type of depth texture to attach to the material.
@@ -54,7 +54,7 @@ public class RawPointCloudBlender : MonoBehaviour
     public float OffsetFromCamera = 1.0f;
 
     // Limit the number of points to bound the performance cost of rendering the point cloud.
-    private const int _maxVerticesInBuffer = 1048576; // 2^n, permet des optimisations d'arithmétique binaire (modulo)
+    private const int _maxVerticesInBuffer = 2097152; // 2^n, permet des optimisations d'arithmétique binaire (modulo)
     private const double _maxUpdateInvervalInSeconds = 0.5f;
     private const double _minUpdateInvervalInSeconds = 0.07f;
     private static readonly string _confidenceThresholdPropertyName = "_ConfidenceThreshold";
@@ -317,77 +317,4 @@ public class RawPointCloudBlender : MonoBehaviour
         byte b = (byte)(bFloat * 255f);
         return new[] { r, g, b };
     }
-
-
-    #region Extension_MTI812
-
-    public bool Paused;
-    private MeshFilter _meshFilter;
-
-    public void TogglePause() => Paused = !Paused;
-
-    public void ExportAsXyzRgb()
-    {
-        try
-        {
-            StartCoroutine(StartSaveRoutine());
-        }
-        catch (Exception e)
-        {
-            ErrorOut.ShowError(e);
-        }
-    }
-
-    private IEnumerator StartSaveRoutine()
-    {
-        var pausedBak = Paused;
-        try
-        {
-            Paused = true;
-            yield return QueryExportPath();
-            FileBrowserHelpers.WriteTextToFile(FileBrowser.Result[0], PointCloudToString());
-        }
-        finally
-        {
-            Paused = pausedBak;
-        }
-    }
-
-    private IEnumerator QueryExportPath()
-    {
-        yield return FileBrowser.WaitForSaveDialog(FileBrowser.PickMode.Files);
-        if (!FileBrowser.Success)
-            ErrorOut.ShowError("Save cancelled");
-    }
-
-    private string PointCloudToString()
-    {
-        var builder = new StringBuilder();
-        var confidence = ConfidenceSlider.value;
-
-        for (var n = 0; n < _verticesCount; ++n)
-        {
-            var i = (_verticesIndex + n) % _maxVerticesInBuffer;
-
-            if (_colors[i].a < confidence * 255f)
-                continue;
-
-            builder.Append(_vertices[i].x.ToString(CultureInfo.InvariantCulture));
-            builder.Append(" ");
-            builder.Append(_vertices[i].y.ToString(CultureInfo.InvariantCulture));
-            builder.Append(" ");
-            builder.Append(_vertices[i].z.ToString(CultureInfo.InvariantCulture));
-            builder.Append(" ");
-            builder.Append(_colors[i].r.ToString(CultureInfo.InvariantCulture));
-            builder.Append(" ");
-            builder.Append(_colors[i].g.ToString(CultureInfo.InvariantCulture));
-            builder.Append(" ");
-            builder.Append(_colors[i].b.ToString(CultureInfo.InvariantCulture));
-            builder.Append("\n");
-        }
-
-        return builder.ToString();
-    }
-
-    #endregion Extension_MTI812
 }
